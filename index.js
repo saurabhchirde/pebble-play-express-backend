@@ -3,6 +3,7 @@ import { MongoClient } from "mongodb";
 import { v4 as uuid } from "uuid";
 import sign from "jwt-encode";
 import dotenv from "dotenv";
+import cors from "cors";
 
 const app = express();
 const port = 8000;
@@ -24,32 +25,23 @@ const url = `mongodb+srv://${process.env.MONGO_DB_USERNAME}:${process.env.MONGO_
 // to parse response body
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(cors());
 
-let client;
 let allVideos = [];
 
 const createEncodedToken = (data) => {
   return sign(data, process.env.JWT_SECRET_KEY);
 };
 
-const connectDatabase = async (res) => {
-  try {
-    client = await MongoClient.connect(url);
-    const db = client.db();
-    return db;
-  } catch (error) {
-    res.status(500).json({ message: "Connecting to database failed" });
-    return;
-  }
-};
-
+// get all videos
 app.get("/api/videos", async (req, res) => {
   try {
-    const db = await connectDatabase(res);
-    const videos = await db.collection(videosCollection).find().toArray();
+    const client = await MongoClient.connect(url);
+    const db = client.db();
+    const videos = await db.collection(videosCollection).find({}).toArray();
     allVideos = videos;
-    res.send(videos).status(200);
-    client.close();
+    res.status(200).json({ videos });
+    client?.close();
   } catch (error) {
     res
       .status(500)
@@ -61,19 +53,70 @@ app.get("/api/videos", async (req, res) => {
 app.get("/api/video/:videoId", async (req, res) => {
   const videoId = req.params.videoId;
   try {
-    const db = await connectDatabase(res);
-    const videos =
+    const client = await MongoClient.connect(url);
+    const db = client.db();
+    const video =
       allVideos.length === 0
         ? (await db.collection(videosCollection).find({}).toArray()).find(
             (video) => video._id === videoId
           )
-        : allVideos;
+        : allVideos.find((video) => video._id === videoId);
 
-    if (videos._id === videoId) res.send(videos).status(200);
+    if (video._id === videoId) res.status(200).json({ video });
     else res.sendStatus(404);
-    client.close();
+    client?.close();
   } catch (error) {
     res.status(500).json({ message: "Unable to get video, please try later!" });
+  }
+});
+
+// category
+// get all categories
+app.get("/api/categories", async (req, res) => {
+  try {
+    const client = await MongoClient.connect(url);
+    const db = client.db();
+    const categories = await db
+      .collection(categoriesCollection)
+      .find({})
+      .toArray();
+
+    res.status(200).json({ categories });
+    client?.close();
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Unable to get videos, please try later!" });
+  }
+});
+
+// get single category
+app.get("/api/category/:categoryId", async (req, res) => {
+  const categoryId = req.params.categoryId;
+  try {
+    const client = await MongoClient.connect(url);
+    const db = client.db();
+    const allCategories = await db
+      .collection(categoriesCollection)
+      .find({})
+      .toArray();
+
+    const selectedCategory = allCategories.find(
+      (category) => category._id === categoryId
+    );
+
+    if (selectedCategory._id === categoryId) {
+      res.status(200).json({ category: selectedCategory });
+      client?.close();
+    } else {
+      res.status(404).json({ message: "Category not found" });
+      client?.close();
+      return;
+    }
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Unable to get categories, please try later!" });
   }
 });
 
@@ -81,19 +124,20 @@ app.get("/api/video/:videoId", async (req, res) => {
 //get all liked videos
 app.get("/api/user/likes", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
-      res.send(userDetails.likes);
-      client.close();
+      res.status(200).json({ likes: userDetails.likes });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -108,20 +152,21 @@ app.post("/api/user/like/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
     const selectedVideo =
       allVideos.length > 0
-        ? allVideos.filter((video) => video._id === videoId)
+        ? allVideos.find((video) => video._id === videoId)
         : (await db.collection(videosCollection).find({}).toArray()).find(
             (video) => video._id === videoId
           );
 
     if (selectedVideo._id === videoId) {
-      const userDetails = await db
-        .collection(usersCollection)
-        .findOne({}, { token: headerToken });
+      const userDetails = (
+        await db.collection(usersCollection).find({}).toArray()
+      ).find((user) => user.token === headerToken);
 
       if (userDetails.token === headerToken) {
         // to check if already liked
@@ -131,29 +176,31 @@ app.post("/api/user/like/:videoId", async (req, res) => {
 
         if (isAvailable) {
           res.status(200).json({ message: "Already liked" });
-          client.close();
+          client?.close();
           return;
         } else {
+          const updatedLikes = userDetails.likes.concat(selectedVideo);
+
           const filter = { token: headerToken };
           const options = { upsert: true };
           const updateDoc = {
-            $set: { likes: userDetails.likes.concat(selectedVideo) },
+            $set: { likes: updatedLikes },
           };
           // to update array
           await db
             .collection(usersCollection)
             .updateOne(filter, updateDoc, options);
-          res.status(200).json({ message: "Video liked" });
-          client.close();
+          res.status(200).json({ likes: updatedLikes, message: "Video liked" });
+          client?.close();
         }
       } else {
         res.status(403).json({ message: "Unathorized access" });
-        client.close();
+        client?.close();
         return;
       }
     } else {
       res.status(404).json({ message: "Video not found" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -168,12 +215,13 @@ app.delete("/api/user/like/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       const remainingVideos = userDetails.likes.filter(
@@ -191,11 +239,13 @@ app.delete("/api/user/like/:videoId", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
-      res.status(200).json({ message: "Video removed from like" });
-      client.close();
+      res
+        .status(200)
+        .json({ likes: remainingVideos, message: "Video removed from like" });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -209,19 +259,20 @@ app.delete("/api/user/like/:videoId", async (req, res) => {
 // get all playlists
 app.get("/api/user/playlists", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
-      res.send(userDetails.playlists);
-      client.close();
+      res.status(200).json({ playlists: userDetails.playlists });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -232,33 +283,34 @@ app.get("/api/user/playlists", async (req, res) => {
 });
 
 // get single playlist
-app.get("/api/user/playlist/:playlistId", async (req, res) => {
+app.get("/api/user/playlists/:playlistId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const playlistId = req.params.playlistId;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
-      const selectedPlaylist = userDetails.playlists.filter(
+      const selectedPlaylist = userDetails.playlists.find(
         (playlist) => playlist.id === playlistId
       );
 
       if (selectedPlaylist) {
-        res.send(selectedPlaylist);
-        client.close();
+        res.status(200).json({ playlist: selectedPlaylist });
+        client?.close();
       } else {
         res.status(404).json({ message: "Playlist not found" });
-        client.close();
+        client?.close();
         return;
       }
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -269,24 +321,25 @@ app.get("/api/user/playlist/:playlistId", async (req, res) => {
 });
 
 // create playlist
-app.post("/api/user/playlist", async (req, res) => {
+app.post("/api/user/playlists", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const playlistName = req.body.name;
+  const body = req.body;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
-  const newPlaylist = { id: uuid(), name: playlistName, videos: [] };
+  const newPlaylist = { id: uuid(), ...body, videos: [] };
 
-  if (!playlistName) {
+  if (!body.title) {
     res.status(400).json({ message: "Playlist name cannot be blank" });
-    client.close();
+    client?.close();
     return;
   }
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       // to get create new playlist
@@ -303,11 +356,13 @@ app.post("/api/user/playlist", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
-      res.status(201).json({ message: "Playlist created", data: newPlaylist });
-      client.close();
+      res
+        .status(201)
+        .json({ message: "Playlist created", playlists: updatedPlaylists });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -318,17 +373,18 @@ app.post("/api/user/playlist", async (req, res) => {
 });
 
 // add video to playlist
-app.post("/api/user/playlist/:playlistId/video/:videoId", async (req, res) => {
+app.post("/api/user/playlists/:playlistId/video/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const playlistId = req.params.playlistId;
   const videoId = req.params.videoId;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       // to get one playlist
@@ -345,14 +401,14 @@ app.post("/api/user/playlist/:playlistId/video/:videoId", async (req, res) => {
           // add new video to previous video list
           const selectedVideo =
             allVideos.length > 0
-              ? allVideos.filter((video) => video._id === videoId)
+              ? allVideos.find((video) => video._id === videoId)
               : (await db.collection(videosCollection).find({}).toArray()).find(
                   (video) => video._id === videoId
                 );
 
           if (!selectedVideo) {
             res.status(404).json({ message: "Video not found" });
-            client.close();
+            client?.close();
             return;
           }
           const updatedPlaylistVideos = [
@@ -382,23 +438,25 @@ app.post("/api/user/playlist/:playlistId/video/:videoId", async (req, res) => {
             .collection(usersCollection)
             .updateOne(filter, updateDoc, options);
 
-          res.send({ ...selectedPlaylist, videos: updatedPlaylistVideos });
-          client.close();
+          res.status(200).json({
+            playlist: { ...selectedPlaylist, videos: updatedPlaylistVideos },
+          });
+          client?.close();
         } else {
           res
             .status(409)
             .json({ message: "Video is already added in your playlist" });
-          client.close();
+          client?.close();
           return;
         }
       } else {
         res.status(404).json({ message: "Playlist not found" });
-        client.close();
+        client?.close();
         return;
       }
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -410,18 +468,19 @@ app.post("/api/user/playlist/:playlistId/video/:videoId", async (req, res) => {
 
 // remove single video from playlist
 app.delete(
-  "/api/user/playlist/:playlistId/video/:videoId",
+  "/api/user/playlists/:playlistId/video/:videoId",
   async (req, res) => {
     const headerToken = req.headers.authorization;
     const playlistId = req.params.playlistId;
     const videoId = req.params.videoId;
 
-    const db = await connectDatabase(res);
+    const client = await MongoClient.connect(url);
+    const db = client.db();
 
     try {
-      const userDetails = await db
-        .collection(usersCollection)
-        .findOne({}, { token: headerToken });
+      const userDetails = (
+        await db.collection(usersCollection).find({}).toArray()
+      ).find((user) => user.token === headerToken);
 
       if (userDetails.token === headerToken) {
         // to get one playlist
@@ -464,22 +523,22 @@ app.delete(
 
             res.status(200).json({
               message: "Video removed from playlist",
-              data: selectedPlaylist,
+              playlist: updatedPlaylists,
             });
-            client.close();
+            client?.close();
           } else {
             res.status(404).json({ message: "Video not found" });
-            client.close();
+            client?.close();
             return;
           }
         } else {
           res.status(404).json({ message: "Playlist not found" });
-          client.close();
+          client?.close();
           return;
         }
       } else {
         res.status(403).json({ message: "Unathorized access" });
-        client.close();
+        client?.close();
         return;
       }
     } catch (error) {
@@ -491,16 +550,17 @@ app.delete(
 );
 
 // delete playlist
-app.delete("/api/user/playlist/:id", async (req, res) => {
+app.delete("/api/user/playlists/:id", async (req, res) => {
   const headerToken = req.headers.authorization;
   const playlistId = req.params.id;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       const isAvailable = userDetails.playlists.some(
@@ -521,14 +581,16 @@ app.delete("/api/user/playlist/:id", async (req, res) => {
           .collection(usersCollection)
           .updateOne(filter, updateDoc, options);
 
-        res.status(200).json({ message: "Playlist deleted" });
-        client.close();
+        res
+          .status(200)
+          .json({ playlists: remainingPlaylists, message: "Playlist deleted" });
+        client?.close();
       } else {
         res.status(404).json({ message: "Playlist not found" });
       }
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -538,24 +600,24 @@ app.delete("/api/user/playlist/:id", async (req, res) => {
   }
 });
 
-// to test from
 // watchlater
 // get all watchlater
 app.get("/api/user/watchlater", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
-      res.send(userDetails.watchlater);
-      client.close();
+      res.status(200).json({ watchlater: userDetails.watchlater });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -570,25 +632,28 @@ app.post("/api/user/watchlater/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       const selectedVideo =
         allVideos.length > 0
-          ? allVideos.filter((video) => video._id === videoId)
+          ? allVideos.find((video) => video._id === videoId)
           : (await db.collection(videosCollection).find({}).toArray()).find(
               (video) => video._id === videoId
             );
 
+      const updatedWatchlater = [selectedVideo, ...userDetails.watchlater];
+
       const filter = { token: headerToken };
       const options = { upsert: true };
       const updateDoc = {
-        $set: { watchlater: [selectedVideo, ...userDetails.watchlater] },
+        $set: { watchlater: updatedWatchlater },
       };
 
       // to update array
@@ -596,11 +661,14 @@ app.post("/api/user/watchlater/:videoId", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
-      res.status(200).json({ message: "Added video to watchlater" });
-      client.close();
+      res.status(200).json({
+        watchlater: updatedWatchlater,
+        message: "Added video to watchlater",
+      });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -615,16 +683,17 @@ app.delete("/api/user/watchlater/:id", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.id;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       const remainingVideos = userDetails.watchlater.filter(
-        (video) => video.id !== videoId
+        (video) => video._id !== videoId
       );
       const filter = { token: headerToken };
       const options = { upsert: true };
@@ -637,11 +706,14 @@ app.delete("/api/user/watchlater/:id", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
-      res.status(200).json({ message: "Video removed from watchlater" });
-      client.close();
+      res.status(200).json({
+        watchlater: remainingVideos,
+        message: "Video removed from watchlater",
+      });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -655,19 +727,20 @@ app.delete("/api/user/watchlater/:id", async (req, res) => {
 // get all from history
 app.get("/api/user/history", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
-      res.send(userDetails.history);
-      client.close();
+      res.status(200).json({ history: userDetails.history });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -682,25 +755,28 @@ app.post("/api/user/history/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       const selectedVideo =
         allVideos.length > 0
-          ? allVideos.filter((video) => video._id === videoId)
+          ? allVideos.find((video) => video._id === videoId)
           : (await db.collection(videosCollection).find({}).toArray()).find(
               (video) => video._id === videoId
             );
 
+      const updatedHistory = [selectedVideo, ...userDetails.watchlater];
+
       const filter = { token: headerToken };
       const options = { upsert: true };
       const updateDoc = {
-        $set: { history: [selectedVideo, ...userDetails.watchlater] },
+        $set: { history: updatedHistory },
       };
 
       // to update array
@@ -708,11 +784,13 @@ app.post("/api/user/history/:videoId", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
-      res.status(200).json({ message: "Added video to history" });
-      client.close();
+      res
+        .status(200)
+        .json({ history: updatedHistory, message: "Added video to history" });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -727,12 +805,13 @@ app.delete("/api/user/history/:id", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.id;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       const remainingVideos = userDetails.watchlater.filter(
@@ -749,11 +828,14 @@ app.delete("/api/user/history/:id", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
-      res.status(200).json({ message: "Video removed from history" });
-      client.close();
+      res.status(200).json({
+        history: remainingVideos,
+        message: "Video removed from history",
+      });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -766,12 +848,13 @@ app.delete("/api/user/history/:id", async (req, res) => {
 // clear all history
 app.delete("/api/user/history", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
 
   try {
-    const userDetails = await db
-      .collection(usersCollection)
-      .findOne({}, { token: headerToken });
+    const userDetails = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
       const filter = { token: headerToken };
@@ -785,11 +868,11 @@ app.delete("/api/user/history", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
-      res.status(200).json({ message: "History cleared" });
-      client.close();
+      res.status(200).json({ history: [], message: "History cleared" });
+      client?.close();
     } else {
       res.status(403).json({ message: "Unathorized access" });
-      client.close();
+      client?.close();
       return;
     }
   } catch (error) {
@@ -799,55 +882,8 @@ app.delete("/api/user/history", async (req, res) => {
   }
 });
 
-// category
-// get all categories
-app.get("/api/categories", async (req, res) => {
-  try {
-    const db = await connectDatabase(res);
-    const categories = await db
-      .collection(categoriesCollection)
-      .find({})
-      .toArray();
-
-    res.send(categories).status(200);
-    client.close();
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Unable to get videos, please try later!" });
-  }
-});
-
-// get single category
-app.get("/api/category/:categoryId", async (req, res) => {
-  const categoryId = req.params.categoryId;
-  try {
-    const db = await connectDatabase(res);
-    const allCategories = await db
-      .collection(categoriesCollection)
-      .find({})
-      .toArray();
-    const selectedCategory = allCategories.find(
-      (category) => category._id === categoryId
-    );
-
-    console.log(selectedCategory);
-    if (selectedCategory._id === categoryId) {
-      res.send(selectedCategory).status(200);
-      client.close();
-    } else {
-      res.status(404).json({ message: "Category not found" });
-      return;
-    }
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Unable to get categories, please try later!" });
-  }
-});
-
 // signup
-app.post("/api/user/signup", async (req, res) => {
+app.post("/api/auth/signup", async (req, res) => {
   const body = req.body;
 
   const encodedToken = createEncodedToken({
@@ -867,25 +903,29 @@ app.post("/api/user/signup", async (req, res) => {
 
   delete newUser.password;
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
   const userDetails = (
     await db.collection(usersCollection).find({}).toArray()
   ).find((user) => user.email === body.email);
 
-  if (userDetails.email === body.email) {
-    res.status(422).json({ message: "User already exist" });
-    // client.close();
+  if (userDetails?.email === body.email) {
+    res.status(422).json({
+      message: "User already exist",
+    });
   } else {
     db.collection(usersCollection).insertOne(newUser);
-    res
-      .status(201)
-      .json({ message: "Signed up successfully", token: encodedToken });
-    // client.close();
+    res.status(201).json({
+      createdUser: newUser,
+      encodedToken,
+      message: "Signed up successfully",
+    });
   }
+  client?.close();
 });
 
 // login
-app.post("/api/user/login", async (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const body = req.body;
 
   const encodedToken = createEncodedToken({
@@ -893,25 +933,30 @@ app.post("/api/user/login", async (req, res) => {
     password: body.password,
   });
 
-  const db = await connectDatabase(res);
+  const client = await MongoClient.connect(url);
+  const db = client.db();
   try {
-    const userFound = await db
-      .collection(usersCollection)
-      .findOne({}, { token: encodedToken });
+    const userFound = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === encodedToken);
 
-    if (userFound.email === body.email) {
+    if (userFound?.email === body.email) {
       if (userFound.token === encodedToken) {
-        res
-          .send(userFound)
-          .status(200)
-          .json({ message: "Logged in successfully" });
+        res.status(200).json({
+          foundUser: userFound,
+          encodedToken,
+          message: "Logged in successfully",
+        });
+        client?.close();
         return;
       } else {
         res.status(401).json({ message: "Wrong password" });
+        client?.close();
         return;
       }
     } else {
       res.status(404).json({ message: "user not found" });
+      client?.close();
       return;
     }
   } catch (error) {
