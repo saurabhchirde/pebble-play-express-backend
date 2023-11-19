@@ -961,7 +961,8 @@ app.post("/api/auth/signup", async (req, res) => {
       message: "User already exist",
     });
   } else {
-    db.collection(usersCollection).insertOne(newUser);
+    db.collection(usersCollection).insertOne(newUser); // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+    res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
     res.status(201).json({
       createdUser: newUser,
       encodedToken,
@@ -989,6 +990,8 @@ app.post("/api/auth/login", async (req, res) => {
 
     if (userFound?.email === body.email) {
       if (userFound.token === encodedToken) {
+        // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+        res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
         res.status(200).json({
           foundUser: userFound,
           encodedToken,
