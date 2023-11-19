@@ -29,9 +29,102 @@ app.use(cors());
 
 let allVideos = [];
 
-const createEncodedToken = (data) => {
-  return sign(data, process.env.JWT_SECRET_KEY);
+const createEncodedToken = async (data) => {
+  return await sign(data, process.env.JWT_SECRET_KEY);
 };
+
+// signup
+app.post("/api/auth/signup", async (req, res) => {
+  const body = req.body;
+
+  const encodedToken = await createEncodedToken({
+    email: body.email,
+    password: body.password,
+  });
+
+  const newUser = {
+    ...body,
+    _id: uuid(),
+    token: encodedToken,
+    likes: [],
+    watchlater: [],
+    history: [],
+    playlists: [],
+  };
+
+  delete newUser.password;
+
+  const client = await MongoClient.connect(url);
+  const db = client.db();
+  const userDetails = (
+    await db.collection(usersCollection).find({}).toArray()
+  ).find((user) => user.email === body.email);
+
+  console.log("userDetails", userDetails);
+  console.log("userDetails", {
+    userEmail: userDetails?.email,
+    bodyEmail: body.email,
+  });
+
+  if (userDetails?.email === body.email) {
+    res.status(422).json({
+      message: "User already exist",
+    });
+  } else {
+    db.collection(usersCollection).insertOne(newUser);
+    res.status(201).json({
+      createdUser: newUser,
+      encodedToken,
+      message: "Signed up successfully",
+    });
+  }
+  client?.close();
+});
+
+// login
+app.post("/api/auth/login", async (req, res) => {
+  const body = req.body;
+
+  const encodedToken = await createEncodedToken({
+    email: body.email,
+    password: body.password,
+  });
+
+  const client = await MongoClient.connect(url);
+  const db = client.db();
+  try {
+    const userFound = (
+      await db.collection(usersCollection).find({}).toArray()
+    ).find((user) => user.token === encodedToken);
+
+    console.log("userFound", userFound);
+    console.log("userFound", {
+      userEmail: userFound?.email,
+      bodyEmail: body.email,
+    });
+
+    if (userFound?.email === body.email) {
+      if (userFound.token === encodedToken) {
+        res.status(200).json({
+          foundUser: userFound,
+          encodedToken,
+          message: "Logged in successfully",
+        });
+        client?.close();
+      } else {
+        res.status(401).json({ message: "Wrong password" });
+        client?.close();
+        return;
+      }
+    } else {
+      res.status(404).json({ message: "user not found" });
+      client?.close();
+      return;
+    }
+  } catch (error) {
+    res.status(500).json({ message: "Unable to login, please try later!" });
+  }
+});
 
 // get all videos
 app.get("/api/videos", async (req, res) => {
@@ -926,88 +1019,6 @@ app.delete("/api/user/history", async (req, res) => {
     res
       .status(500)
       .json({ message: "Unable to clear history, please try later!" });
-  }
-});
-
-// signup
-app.post("/api/auth/signup", async (req, res) => {
-  const body = req.body;
-
-  const encodedToken = createEncodedToken({
-    email: body.email,
-    password: body.password,
-  });
-
-  const newUser = {
-    ...body,
-    _id: uuid(),
-    token: encodedToken,
-    likes: [],
-    watchlater: [],
-    history: [],
-    playlists: [],
-  };
-
-  delete newUser.password;
-
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-  const userDetails = (
-    await db.collection(usersCollection).find({}).toArray()
-  ).find((user) => user.email === body.email);
-
-  if (userDetails?.email === body.email) {
-    res.status(422).json({
-      message: "User already exist",
-    });
-  } else {
-    db.collection(usersCollection).insertOne(newUser);
-    res.status(201).json({
-      createdUser: newUser,
-      encodedToken,
-      message: "Signed up successfully",
-    });
-  }
-  client?.close();
-});
-
-// login
-app.post("/api/auth/login", async (req, res) => {
-  const body = req.body;
-
-  const encodedToken = createEncodedToken({
-    email: body.email,
-    password: body.password,
-  });
-
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-  try {
-    const userFound = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === encodedToken);
-
-    if (userFound?.email === body.email) {
-      if (userFound.token === encodedToken) {
-        res.status(200).json({
-          foundUser: userFound,
-          encodedToken,
-          message: "Logged in successfully",
-        });
-        client?.close();
-        return;
-      } else {
-        res.status(401).json({ message: "Wrong password" });
-        client?.close();
-        return;
-      }
-    } else {
-      res.status(404).json({ message: "user not found" });
-      client?.close();
-      return;
-    }
-  } catch (error) {
-    res.status(500).json({ message: "Unable to login, please try later!" });
   }
 });
 
