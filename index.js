@@ -2,10 +2,12 @@ import express from "express";
 import { MongoClient } from "mongodb";
 import { v4 as uuid } from "uuid";
 import sign from "jwt-encode";
+import dotenv from "dotenv";
 
 const app = express();
 const port = 8000;
-const JWT_SECRET_KEY = "play-jwt-secret-key";
+
+dotenv.config({ path: "./.env" });
 
 // Database Name
 const dbName = "play";
@@ -15,13 +17,8 @@ const videosCollection = "videos";
 const usersCollection = "users";
 const categoriesCollection = "categories";
 
-// credentials
-const dbUsername = "saurabh123chirde";
-const dbPassword = "sbucGk2G2GEnTVUq";
-const dbClusterUrl = "cluster0.zf51i4s.mongodb.net";
-
 // Connection URL
-const url = `mongodb+srv://${dbUsername}:${dbPassword}@${dbClusterUrl}/${dbName}?retryWrites=true&w=majority`;
+const url = `mongodb+srv://${process.env.MONGO_DB_USERNAME}:${process.env.MONGO_DB_USER_PASSWORD}@${process.env.MONGO_DB_CLUSTER_URL}/${dbName}?retryWrites=true&w=majority`;
 
 // middlleware
 // to parse response body
@@ -30,6 +27,10 @@ app.use(express.json());
 
 let client;
 let allVideos = [];
+
+const createEncodedToken = (data) => {
+  return sign(data, process.env.JWT_SECRET_KEY);
+};
 
 const connectDatabase = async (res) => {
   try {
@@ -849,10 +850,10 @@ app.get("/api/category/:categoryId", async (req, res) => {
 app.post("/api/user/signup", async (req, res) => {
   const body = req.body;
 
-  const encodedToken = sign(
-    { email: body.email, password: body.password },
-    JWT_SECRET_KEY
-  );
+  const encodedToken = createEncodedToken({
+    email: body.email,
+    password: body.password,
+  });
 
   const newUser = {
     ...body,
@@ -867,11 +868,11 @@ app.post("/api/user/signup", async (req, res) => {
   delete newUser.password;
 
   const db = await connectDatabase(res);
-  const userDetails = await db
-    .collection(usersCollection)
-    .findOne({}, { email: body.email });
+  const userDetails = (
+    await db.collection(usersCollection).find({}).toArray()
+  ).find((user) => user.email === body.email);
 
-  if (userDetails) {
+  if (userDetails.email === body.email) {
     res.status(422).json({ message: "User already exist" });
     // client.close();
   } else {
@@ -886,10 +887,11 @@ app.post("/api/user/signup", async (req, res) => {
 // login
 app.post("/api/user/login", async (req, res) => {
   const body = req.body;
-  const encodedToken = sign(
-    { email: body.email, password: body.password },
-    JWT_SECRET_KEY
-  );
+
+  const encodedToken = createEncodedToken({
+    email: body.email,
+    password: body.password,
+  });
 
   const db = await connectDatabase(res);
   try {
