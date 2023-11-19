@@ -1,9 +1,9 @@
-import express from "express";
-import { MongoClient } from "mongodb";
-import { v4 as uuid } from "uuid";
-import sign from "jwt-encode";
-import dotenv from "dotenv";
-import cors from "cors";
+const express = require("express");
+const { MongoClient } = require("mongodb");
+const { v4: uuid } = require("uuid");
+const sign = require("jwt-encode");
+const dotenv = require("dotenv");
+const cors = require("cors");
 
 const app = express();
 const port = 8000;
@@ -40,6 +40,8 @@ app.get("/api/videos", async (req, res) => {
     const db = client.db();
     const videos = await db.collection(videosCollection).find({}).toArray();
     allVideos = videos;
+    // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+    res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
     res.status(200).json({ videos });
     client?.close();
   } catch (error) {
@@ -62,8 +64,13 @@ app.get("/api/video/:videoId", async (req, res) => {
           )
         : allVideos.find((video) => video._id === videoId);
 
-    if (video._id === videoId) res.status(200).json({ video });
-    else res.sendStatus(404);
+    if (video._id === videoId) {
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
+      res.status(200).json({ video });
+    } else {
+      res.sendStatus(404);
+    }
     client?.close();
   } catch (error) {
     res.status(500).json({ message: "Unable to get video, please try later!" });
@@ -81,6 +88,8 @@ app.get("/api/categories", async (req, res) => {
       .find({})
       .toArray();
 
+    // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+    res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
     res.status(200).json({ categories });
     client?.close();
   } catch (error) {
@@ -106,6 +115,8 @@ app.get("/api/category/:categoryId", async (req, res) => {
     );
 
     if (selectedCategory._id === categoryId) {
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({ category: selectedCategory });
       client?.close();
     } else {
@@ -133,6 +144,8 @@ app.get("/api/user/likes", async (req, res) => {
     ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({ likes: userDetails.likes });
       client?.close();
     } else {
@@ -190,6 +203,9 @@ app.post("/api/user/like/:videoId", async (req, res) => {
           await db
             .collection(usersCollection)
             .updateOne(filter, updateDoc, options);
+
+          // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+          res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
           res.status(200).json({ likes: updatedLikes, message: "Video liked" });
           client?.close();
         }
@@ -239,6 +255,8 @@ app.delete("/api/user/like/:videoId", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res
         .status(200)
         .json({ likes: remainingVideos, message: "Video removed from like" });
@@ -268,6 +286,8 @@ app.get("/api/user/playlists", async (req, res) => {
     ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({ playlists: userDetails.playlists });
       client?.close();
     } else {
@@ -301,6 +321,8 @@ app.get("/api/user/playlists/:playlistId", async (req, res) => {
       );
 
       if (selectedPlaylist) {
+        // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+        res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
         res.status(200).json({ playlist: selectedPlaylist });
         client?.close();
       } else {
@@ -356,6 +378,8 @@ app.post("/api/user/playlists", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res
         .status(201)
         .json({ message: "Playlist created", playlists: updatedPlaylists });
@@ -438,6 +462,8 @@ app.post("/api/user/playlists/:playlistId/video/:videoId", async (req, res) => {
             .collection(usersCollection)
             .updateOne(filter, updateDoc, options);
 
+          // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+          res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
           res.status(200).json({
             playlist: { ...selectedPlaylist, videos: updatedPlaylistVideos },
           });
@@ -521,6 +547,11 @@ app.delete(
               .collection(usersCollection)
               .updateOne(filter, updateDoc, options);
 
+            // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+            res.setHeader(
+              "Cache-Control",
+              "s-max-age=1, stale-while-revalidate"
+            );
             res.status(200).json({
               message: "Video removed from playlist",
               playlist: updatedPlaylists,
@@ -581,6 +612,8 @@ app.delete("/api/user/playlists/:id", async (req, res) => {
           .collection(usersCollection)
           .updateOne(filter, updateDoc, options);
 
+        // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+        res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
         res
           .status(200)
           .json({ playlists: remainingPlaylists, message: "Playlist deleted" });
@@ -613,6 +646,8 @@ app.get("/api/user/watchlater", async (req, res) => {
     ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({ watchlater: userDetails.watchlater });
       client?.close();
     } else {
@@ -661,6 +696,8 @@ app.post("/api/user/watchlater/:videoId", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({
         watchlater: updatedWatchlater,
         message: "Added video to watchlater",
@@ -706,6 +743,8 @@ app.delete("/api/user/watchlater/:id", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({
         watchlater: remainingVideos,
         message: "Video removed from watchlater",
@@ -736,6 +775,8 @@ app.get("/api/user/history", async (req, res) => {
     ).find((user) => user.token === headerToken);
 
     if (userDetails.token === headerToken) {
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({ history: userDetails.history });
       client?.close();
     } else {
@@ -784,6 +825,8 @@ app.post("/api/user/history/:videoId", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res
         .status(200)
         .json({ history: updatedHistory, message: "Added video to history" });
@@ -828,6 +871,8 @@ app.delete("/api/user/history/:id", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({
         history: remainingVideos,
         message: "Video removed from history",
@@ -868,6 +913,8 @@ app.delete("/api/user/history", async (req, res) => {
         .collection(usersCollection)
         .updateOne(filter, updateDoc, options);
 
+      // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
+      res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
       res.status(200).json({ history: [], message: "History cleared" });
       client?.close();
     } else {
@@ -967,3 +1014,6 @@ app.post("/api/auth/login", async (req, res) => {
 app.listen(8000, () => {
   console.log(`port open on ${port}`);
 });
+
+// Export the Express API
+module.exports = app;
