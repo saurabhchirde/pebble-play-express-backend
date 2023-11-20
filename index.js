@@ -960,15 +960,16 @@ app.post("/api/auth/signup", async (req, res) => {
     res.status(422).json({
       message: "User already exist",
     });
+    client?.close();
   } else {
-    db.collection(usersCollection).insertOne(newUser);
+    await db.collection(usersCollection).insertOne(newUser);
     res.status(201).json({
       createdUser: newUser,
       encodedToken,
       message: "Signed up successfully",
     });
+    client?.close();
   }
-  client?.close();
 });
 
 // login
@@ -1017,3 +1018,5 @@ app.listen(8000, () => {
 
 // Export the Express API
 module.exports = app;
+
+// TODO: Signup not working
