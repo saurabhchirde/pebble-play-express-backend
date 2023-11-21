@@ -33,12 +33,39 @@ const createEncodedToken = (data) => {
   return sign(data, process.env.JWT_SECRET_KEY);
 };
 
+let client;
+
+const getDb = async () => {
+  client = await MongoClient.connect(url);
+  return client.db();
+};
+
+const getAllVideos = async () => {
+  const db = await getDb();
+  return await db.collection(videosCollection).find({}).toArray();
+};
+
+const getAllUsers = async () => {
+  const db = await getDb();
+  return db.collection(usersCollection).find({}).toArray();
+};
+
+const getAllCategories = async () => {
+  const db = await getDb();
+  return await db.collection(categoriesCollection).find({}).toArray();
+};
+
+const updateUserDetail = async (filter, updateDoc) => {
+  const db = await getDb();
+  const options = { upsert: true };
+
+  await db.collection(usersCollection).updateOne(filter, updateDoc, options);
+};
+
 // get all videos
 app.get("/api/videos", async (req, res) => {
   try {
-    const client = await MongoClient.connect(url);
-    const db = client.db();
-    const videos = await db.collection(videosCollection).find({}).toArray();
+    const videos = await getAllVideos();
     allVideos = videos;
     // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
     res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -55,13 +82,9 @@ app.get("/api/videos", async (req, res) => {
 app.get("/api/video/:videoId", async (req, res) => {
   const videoId = req.params.videoId;
   try {
-    const client = await MongoClient.connect(url);
-    const db = client.db();
     const video =
       allVideos.length === 0
-        ? (await db.collection(videosCollection).find({}).toArray()).find(
-            (video) => video._id === videoId
-          )
+        ? (await getAllVideos()).find((video) => video._id === videoId)
         : allVideos.find((video) => video._id === videoId);
 
     if (video._id === videoId) {
@@ -81,12 +104,7 @@ app.get("/api/video/:videoId", async (req, res) => {
 // get all categories
 app.get("/api/categories", async (req, res) => {
   try {
-    const client = await MongoClient.connect(url);
-    const db = client.db();
-    const categories = await db
-      .collection(categoriesCollection)
-      .find({})
-      .toArray();
+    const categories = await getAllCategories();
 
     // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
     res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -103,12 +121,7 @@ app.get("/api/categories", async (req, res) => {
 app.get("/api/category/:categoryId", async (req, res) => {
   const categoryId = req.params.categoryId;
   try {
-    const client = await MongoClient.connect(url);
-    const db = client.db();
-    const allCategories = await db
-      .collection(categoriesCollection)
-      .find({})
-      .toArray();
+    const allCategories = await getAllCategories();
 
     const selectedCategory = allCategories.find(
       (category) => category._id === categoryId
@@ -135,13 +148,11 @@ app.get("/api/category/:categoryId", async (req, res) => {
 //get all liked videos
 app.get("/api/user/likes", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const client = await MongoClient.connect(url);
-  const db = client.db();
 
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
@@ -165,21 +176,16 @@ app.post("/api/user/like/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
     const selectedVideo =
       allVideos.length > 0
         ? allVideos.find((video) => video._id === videoId)
-        : (await db.collection(videosCollection).find({}).toArray()).find(
-            (video) => video._id === videoId
-          );
+        : (await getAllVideos()).find((video) => video._id === videoId);
 
     if (selectedVideo._id === videoId) {
-      const userDetails = (
-        await db.collection(usersCollection).find({}).toArray()
-      ).find((user) => user.token === headerToken);
+      const userDetails = (await getAllUsers()).find(
+        (user) => user.token === headerToken
+      );
 
       if (userDetails.token === headerToken) {
         // to check if already liked
@@ -195,14 +201,11 @@ app.post("/api/user/like/:videoId", async (req, res) => {
           const updatedLikes = userDetails.likes.concat(selectedVideo);
 
           const filter = { token: headerToken };
-          const options = { upsert: true };
           const updateDoc = {
             $set: { likes: updatedLikes },
           };
-          // to update array
-          await db
-            .collection(usersCollection)
-            .updateOne(filter, updateDoc, options);
+
+          await updateUserDetail(filter, updateDoc);
 
           // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
           res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -231,13 +234,10 @@ app.delete("/api/user/like/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       const remainingVideos = userDetails.likes.filter(
@@ -245,15 +245,11 @@ app.delete("/api/user/like/:videoId", async (req, res) => {
       );
 
       const filter = { token: headerToken };
-      const options = { upsert: true };
       const updateDoc = {
         $set: { likes: remainingVideos },
       };
 
-      // to update array
-      await db
-        .collection(usersCollection)
-        .updateOne(filter, updateDoc, options);
+      await updateUserDetail(filter, updateDoc);
 
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
       res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -277,13 +273,11 @@ app.delete("/api/user/like/:videoId", async (req, res) => {
 // get all playlists
 app.get("/api/user/playlists", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const client = await MongoClient.connect(url);
-  const db = client.db();
 
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
@@ -307,13 +301,10 @@ app.get("/api/user/playlists/:playlistId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const playlistId = req.params.playlistId;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       const selectedPlaylist = userDetails.playlists.find(
@@ -347,9 +338,6 @@ app.post("/api/user/playlists", async (req, res) => {
   const headerToken = req.headers.authorization;
   const body = req.body;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   const newPlaylist = { id: uuid(), ...body, videos: [] };
 
   if (!body.title) {
@@ -359,24 +347,20 @@ app.post("/api/user/playlists", async (req, res) => {
   }
 
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       // to get create new playlist
       const updatedPlaylists = [newPlaylist, ...userDetails.playlists];
 
       const filter = { token: headerToken };
-      const options = { upsert: true };
       const updateDoc = {
         $set: { playlists: updatedPlaylists },
       };
 
-      // to update array
-      await db
-        .collection(usersCollection)
-        .updateOne(filter, updateDoc, options);
+      await updateUserDetail(filter, updateDoc);
 
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
       res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -402,13 +386,10 @@ app.post("/api/user/playlists/:playlistId/video/:videoId", async (req, res) => {
   const playlistId = req.params.playlistId;
   const videoId = req.params.videoId;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       // to get one playlist
@@ -426,9 +407,7 @@ app.post("/api/user/playlists/:playlistId/video/:videoId", async (req, res) => {
           const selectedVideo =
             allVideos.length > 0
               ? allVideos.find((video) => video._id === videoId)
-              : (await db.collection(videosCollection).find({}).toArray()).find(
-                  (video) => video._id === videoId
-                );
+              : (await getAllVideos()).find((video) => video._id === videoId);
 
           if (!selectedVideo) {
             res.status(404).json({ message: "Video not found" });
@@ -452,15 +431,11 @@ app.post("/api/user/playlists/:playlistId/video/:videoId", async (req, res) => {
           ];
 
           const filter = { token: headerToken };
-          const options = { upsert: true };
           const updateDoc = {
             $set: { playlists: updatedPlaylists },
           };
 
-          // to update array
-          await db
-            .collection(usersCollection)
-            .updateOne(filter, updateDoc, options);
+          await updateUserDetail(filter, updateDoc);
 
           // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
           res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -500,13 +475,10 @@ app.delete(
     const playlistId = req.params.playlistId;
     const videoId = req.params.videoId;
 
-    const client = await MongoClient.connect(url);
-    const db = client.db();
-
     try {
-      const userDetails = (
-        await db.collection(usersCollection).find({}).toArray()
-      ).find((user) => user.token === headerToken);
+      const userDetails = (await getAllUsers()).find(
+        (user) => user.token === headerToken
+      );
 
       if (userDetails.token === headerToken) {
         // to get one playlist
@@ -537,15 +509,11 @@ app.delete(
             ];
 
             const filter = { token: headerToken };
-            const options = { upsert: true };
             const updateDoc = {
               $set: { playlists: updatedPlaylists },
             };
 
-            // to update array
-            await db
-              .collection(usersCollection)
-              .updateOne(filter, updateDoc, options);
+            await updateUserDetail(filter, updateDoc);
 
             // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
             res.setHeader(
@@ -585,13 +553,10 @@ app.delete("/api/user/playlists/:id", async (req, res) => {
   const headerToken = req.headers.authorization;
   const playlistId = req.params.id;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       const isAvailable = userDetails.playlists.some(
@@ -602,15 +567,11 @@ app.delete("/api/user/playlists/:id", async (req, res) => {
           (playlist) => playlist.id !== playlistId
         );
         const filter = { token: headerToken };
-        const options = { upsert: true };
         const updateDoc = {
           $set: { playlists: remainingPlaylists },
         };
 
-        // to update array
-        await db
-          .collection(usersCollection)
-          .updateOne(filter, updateDoc, options);
+        await updateUserDetail(filter, updateDoc);
 
         // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
         res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -637,13 +598,11 @@ app.delete("/api/user/playlists/:id", async (req, res) => {
 // get all watchlater
 app.get("/api/user/watchlater", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const client = await MongoClient.connect(url);
-  const db = client.db();
 
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
@@ -667,34 +626,25 @@ app.post("/api/user/watchlater/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       const selectedVideo =
         allVideos.length > 0
           ? allVideos.find((video) => video._id === videoId)
-          : (await db.collection(videosCollection).find({}).toArray()).find(
-              (video) => video._id === videoId
-            );
+          : (await getAllVideos()).find((video) => video._id === videoId);
 
       const updatedWatchlater = [selectedVideo, ...userDetails.watchlater];
 
       const filter = { token: headerToken };
-      const options = { upsert: true };
       const updateDoc = {
         $set: { watchlater: updatedWatchlater },
       };
 
-      // to update array
-      await db
-        .collection(usersCollection)
-        .updateOne(filter, updateDoc, options);
+      await updateUserDetail(filter, updateDoc);
 
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
       res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -720,28 +670,21 @@ app.delete("/api/user/watchlater/:id", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.id;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       const remainingVideos = userDetails.watchlater.filter(
         (video) => video._id !== videoId
       );
       const filter = { token: headerToken };
-      const options = { upsert: true };
       const updateDoc = {
         $set: { watchlater: remainingVideos },
       };
 
-      // to update array
-      await db
-        .collection(usersCollection)
-        .updateOne(filter, updateDoc, options);
+      await updateUserDetail(filter, updateDoc);
 
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
       res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -766,13 +709,11 @@ app.delete("/api/user/watchlater/:id", async (req, res) => {
 // get all from history
 app.get("/api/user/history", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const client = await MongoClient.connect(url);
-  const db = client.db();
 
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
@@ -796,34 +737,25 @@ app.post("/api/user/history/:videoId", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.videoId;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       const selectedVideo =
         allVideos.length > 0
           ? allVideos.find((video) => video._id === videoId)
-          : (await db.collection(videosCollection).find({}).toArray()).find(
-              (video) => video._id === videoId
-            );
+          : (await getAllVideos()).find((video) => video._id === videoId);
 
       const updatedHistory = [selectedVideo, ...userDetails.watchlater];
 
       const filter = { token: headerToken };
-      const options = { upsert: true };
       const updateDoc = {
         $set: { history: updatedHistory },
       };
 
-      // to update array
-      await db
-        .collection(usersCollection)
-        .updateOne(filter, updateDoc, options);
+      await updateUserDetail(filter, updateDoc);
 
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
       res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -848,28 +780,21 @@ app.delete("/api/user/history/:id", async (req, res) => {
   const headerToken = req.headers.authorization;
   const videoId = req.params.id;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
-      const remainingVideos = userDetails.watchlater.filter(
-        (video) => video.id !== videoId
+      const remainingVideos = userDetails.history.filter(
+        (video) => video._id !== videoId
       );
       const filter = { token: headerToken };
-      const options = { upsert: true };
       const updateDoc = {
         $set: { history: remainingVideos },
       };
 
-      // to update array
-      await db
-        .collection(usersCollection)
-        .updateOne(filter, updateDoc, options);
+      await updateUserDetail(filter, updateDoc);
 
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
       res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -893,25 +818,19 @@ app.delete("/api/user/history/:id", async (req, res) => {
 // clear all history
 app.delete("/api/user/history", async (req, res) => {
   const headerToken = req.headers.authorization;
-  const client = await MongoClient.connect(url);
-  const db = client.db();
 
   try {
-    const userDetails = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.token === headerToken);
+    const userDetails = (await getAllUsers()).find(
+      (user) => user.token === headerToken
+    );
 
     if (userDetails.token === headerToken) {
       const filter = { token: headerToken };
-      const options = { upsert: true };
       const updateDoc = {
         $set: { history: [] },
       };
 
-      // to update array
-      await db
-        .collection(usersCollection)
-        .updateOne(filter, updateDoc, options);
+      await updateUserDetail(filter, updateDoc);
 
       // This describes the lifetime of our resource, telling the CDN to serve from the cache and update in the background (at most once per second).
       res.setHeader("Cache-Control", "s-max-age=1, stale-while-revalidate");
@@ -950,11 +869,10 @@ app.post("/api/auth/signup", async (req, res) => {
 
   delete newUser.password;
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
-  const userDetails = (
-    await db.collection(usersCollection).find({}).toArray()
-  ).find((user) => user.email === body.email);
+  const db = await getDb();
+  const userDetails = (await getAllUsers()).find(
+    (user) => user.email === body.email
+  );
 
   if (userDetails?.email === body.email) {
     res.status(422).json({
@@ -981,12 +899,10 @@ app.post("/api/auth/login", async (req, res) => {
     password: body.password,
   });
 
-  const client = await MongoClient.connect(url);
-  const db = client.db();
   try {
-    const userFound = (
-      await db.collection(usersCollection).find({}).toArray()
-    ).find((user) => user.email === body.email);
+    const userFound = (await getAllUsers()).find(
+      (user) => user.email === body.email
+    );
 
     if (userFound?.email === body.email) {
       if (userFound.token === encodedToken) {
